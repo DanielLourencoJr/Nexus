@@ -2,7 +2,7 @@ import "dotenv/config";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { askGroq, createGroqClient, createHistory } from "../index.js";
+import { ask, createGroqClient, createHistory } from "../index.js";
 import { Schedules } from "../src/db.js";
 
 function requireEnv(name) {
@@ -25,6 +25,12 @@ function createHarness() {
   const history = createHistory();
   const username = "IntegrationUser";
   return { groqClient, history, username };
+}
+
+function seedHistory(history, lines) {
+  for (const line of lines) {
+    history.push(line);
+  }
 }
 
 function sleep(ms) {
@@ -57,7 +63,7 @@ function withRateLimit(name, fn) {
 
 withRateLimit("conversa normal não deve disparar tools", async () => {
   const { groqClient, history, username } = createHarness();
-  const reply = await withRetry(() => askGroq({
+  const reply = await withRetry(() => ask({
     groqClient,
     history,
     username,
@@ -78,7 +84,7 @@ withRateLimit("listar lembretes usa tool list_schedules", async () => {
   Schedules.insert(userId, username, "0 20 * * 2,4", "Estudar Física", true);
 
   let listed = false;
-  const reply = await withRetry(() => askGroq({
+  const reply = await withRetry(() => ask({
     groqClient,
     history,
     username,
@@ -94,7 +100,7 @@ withRateLimit("listar lembretes usa tool list_schedules", async () => {
 withRateLimit("criar lembrete dispara tool create_schedule", async () => {
   const { groqClient, history, username } = createHarness();
   let captured = null;
-  const reply = await withRetry(() => askGroq({
+  const reply = await withRetry(() => ask({
     groqClient,
     history,
     username,
@@ -109,6 +115,70 @@ withRateLimit("criar lembrete dispara tool create_schedule", async () => {
   }
 });
 
+withRateLimit("adicionar lembrete para daqui 5 minutos deve criar (não listar)", async () => {
+  const { groqClient, history, username } = createHarness();
+  let captured = null;
+  let listed = false;
+  const reply = await withRetry(() => ask({
+    groqClient,
+    history,
+    username,
+    userMessage: "Adicione um lembrete para daqui 5 minutos.",
+    onScheduleDetected: async (schedules) => { captured = schedules; },
+    onListDetected: async () => { listed = true; },
+  }));
+
+  assert.equal(reply, null);
+  assert.equal(listed, false);
+  assert.ok(Array.isArray(captured) && captured.length > 0);
+});
+
+withRateLimit("criar após listagem recente não deve listar novamente", async () => {
+  const { groqClient, history, username } = createHarness();
+  seedHistory(history, [
+    { role: "user", content: "Akai: Quais são meus lembretes?" },
+    { role: "assistant", content: "Seus agendamentos:\n#1 — Às 09:00 → \"Lembrete: hora de fazer o almoço\"\n#2 — Às 20:00 → \"Estudar Física\"" },
+  ]);
+
+  let captured = null;
+  let listed = false;
+  const reply = await withRetry(() => ask({
+    groqClient,
+    history,
+    username,
+    userMessage: "Adicione um lembrete para daqui 5 minutos.",
+    onScheduleDetected: async (schedules) => { captured = schedules; },
+    onListDetected: async () => { listed = true; },
+  }));
+
+  assert.equal(reply, null);
+  assert.equal(listed, false);
+  assert.ok(Array.isArray(captured) && captured.length > 0);
+});
+
+withRateLimit("listar lembretes não deve criar novos", async () => {
+  const { groqClient, history, username } = createHarness();
+  const userId = `integration-${randomUUID()}`;
+  cleanupUserSchedules(userId);
+  Schedules.insert(userId, username, "0 7 * * 1,2,4,5", "Estudar inglês", true);
+
+  let listed = false;
+  let created = false;
+  const reply = await withRetry(() => ask({
+    groqClient,
+    history,
+    username,
+    userMessage: "Liste os lembretes.",
+    onListDetected: async () => { listed = true; },
+    onScheduleDetected: async () => { created = true; },
+  }));
+
+  assert.equal(reply, null);
+  assert.equal(listed, true);
+  assert.equal(created, false);
+  cleanupUserSchedules(userId);
+});
+
 withRateLimit("remover lembrete dispara tool delete_schedule com id", async () => {
   const { groqClient, history, username } = createHarness();
   const userId = `integration-${randomUUID()}`;
@@ -117,7 +187,7 @@ withRateLimit("remover lembrete dispara tool delete_schedule com id", async () =
   const id = result.lastInsertRowid;
 
   let receivedIds = null;
-  const reply = await withRetry(() => askGroq({
+  const reply = await withRetry(() => ask({
     groqClient,
     history,
     username,

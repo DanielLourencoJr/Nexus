@@ -7,6 +7,7 @@ Bot de Discord com IA integrada via Groq, suporte a agendamentos e histórico pe
 - Escuta um canal específico no Discord e responde em linguagem natural.
 - Mantém histórico de conversa carregado diretamente do canal — persiste entre reinicializações.
 - Entende contexto de replies, incluindo mensagens fora das 50 mais recentes.
+- Roteia a intenção do usuário para agentes especializados (chat, agendamentos, scraper).
 - Detecta intenção de agendamento via tool calling e cria cron jobs dinamicamente.
 - Agendamentos são salvos em SQLite e recarregados automaticamente ao iniciar.
 - Fallback automático entre modelos caso um falhe.
@@ -53,7 +54,10 @@ nexus/
 ├── config/
 │   └── prompts/
 │       ├── _base.yml              # contexto base (identidade, data atual)
-│       ├── nexus.yml              # prompt principal (lista includes)
+│       ├── chat.yml               # prompt do agente de conversa
+│       ├── router.yml             # prompt do roteador de intenção
+│       ├── schedule.yml           # prompt do agente de agendamentos
+│       ├── scraper.yml            # prompt do agente de scraper
 │       ├── snippets/
 │       │   ├── discord_rules.yml      # formato, limite de caracteres
 │       │   ├── format_rules.yml       # nunca inventar, admitir incerteza
@@ -61,7 +65,8 @@ nexus/
 │       └── tools/
 │           ├── create_schedule.yml # schema de criação
 │           ├── delete_schedule.yml # schema de remoção
-│           └── list_schedules.yml  # schema de listagem
+│           ├── list_schedules.yml  # schema de listagem
+│           └── route_intent.yml    # schema de roteamento
 ├── data/
 │   └── nexus.db                   # banco SQLite (criado automaticamente)
 ├── src/

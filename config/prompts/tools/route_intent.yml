@@ -1,0 +1,26 @@
+name: route_intent
+description: >
+  Classifica a intenção do usuário para roteamento do Nexus.
+parameters:
+  type: object
+  properties:
+    intent:
+      type: string
+      enum: [chat, schedule, scraper]
+      description: Intenção principal da mensagem do usuário.
+    action:
+      type: string
+      enum: [chat, create, list, delete, other]
+      description: Quando intent=schedule, indique a ação principal (create/list/delete). Caso contrário use chat.
+    confidence:
+      type: number
+      description: Confiança de 0 a 1.
+    needs_clarification:
+      type: boolean
+      description: true se faltar informação para decidir.
+    clarification_question:
+      anyOf:
+        - type: string
+        - type: "null"
+      description: Pergunta curta para esclarecer a intenção.
+  required: [intent, confidence]

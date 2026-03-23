@@ -6,6 +6,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
+  MessageFlags,
 } from "discord.js";
 import Groq from "groq-sdk";
 import { fileURLToPath } from "url";
@@ -20,6 +21,7 @@ const TARGET_REPLY_LIMIT = 1200;
 const CLEAR_COMMAND = "!clear";
 
 const pendingSchedules = new Map();
+let TRACE_SEQ = 0;
 
 const MODELS = [
   "openai/gpt-oss-120b",
@@ -28,7 +30,8 @@ const MODELS = [
   "llama-3.1-8b-instant",
 ];
 
-const TOOLS = buildTools(["list_schedules", "create_schedule", "delete_schedule"]);
+const SCHEDULE_TOOLS = buildTools(["list_schedules", "create_schedule", "delete_schedule"]);
+const ROUTER_TOOLS = buildTools(["route_intent"]);
 
 function getDatePartsInTimeZone(timeZone = "America/Fortaleza") {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -60,9 +63,9 @@ function normalizeOneTimeCron(cronExpr) {
   return [min, hour, dom, mon, dow].join(" ");
 }
 
-function getSystemPrompt() {
+function getSystemPrompt(name) {
   const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Fortaleza" });
-  return buildPrompt("nexus", { now });
+  return buildPrompt(name, { now });
 }
 
 function humanCron(cronExpr) {
@@ -150,6 +153,10 @@ function formatScheduleList(schedules) {
   }).join("\n");
 }
 
+function logTrace(traceId, msg) {
+  console.log(`[trace:${traceId}] ${msg}`);
+}
+
 export const DEFAULT_MAX_HISTORY = MAX_HISTORY;
 export const DEFAULT_MODELS = MODELS;
 export function createHistory() { return []; }
@@ -162,6 +169,11 @@ export function createDiscordClient() {
   return new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
   });
+}
+
+function sliceHistory(history, max = 8) {
+  if (history.length <= max) return history;
+  return history.slice(history.length - max);
 }
 
 export async function loadHistory(channel, history, maxHistory = MAX_HISTORY) {
@@ -178,14 +190,108 @@ export async function loadHistory(channel, history, maxHistory = MAX_HISTORY) {
   console.log(`Histórico carregado: ${history.length} mensagens.`);
 }
 
-export async function askGroq({
-  groqClient, history, username, userMessage,
+export async function routeIntent({
+  groqClient, history, models = DEFAULT_MODELS, traceId = null,
+}) {
+  const systemPrompt = getSystemPrompt("router");
+  const messages = [{ role: "system", content: systemPrompt }, ...sliceHistory(history, 8)];
+  if (traceId) logTrace(traceId, "Router: start");
+
+  for (const model of models) {
+    try {
+      const response = await groqClient.chat.completions.create({
+        model,
+        messages,
+        tools: ROUTER_TOOLS,
+        tool_choice: { type: "function", function: { name: "route_intent" } },
+      });
+      const choice = response.choices[0];
+      if (choice.finish_reason === "tool_calls") {
+        const toolCall = (choice.message.tool_calls ?? []).find((c) => c.function?.name === "route_intent");
+        if (!toolCall) break;
+        const args = JSON.parse(toolCall.function.arguments);
+        const intent = args.intent ?? "chat";
+        const action = args.action ?? "chat";
+        const confidence = Number(args.confidence ?? 0);
+        const result = {
+          intent,
+          action,
+          confidence: Number.isFinite(confidence) ? confidence : 0,
+          needsClarification: args.needs_clarification === true,
+          clarificationQuestion: typeof args.clarification_question === "string" ? args.clarification_question : null,
+          model,
+        };
+        if (traceId) {
+          logTrace(traceId, `Router: intent=${result.intent} confidence=${result.confidence.toFixed(2)} needsClarification=${result.needsClarification}`);
+        }
+        return result;
+      }
+    } catch (err) {
+      console.warn(`Falha no router com ${model}: ${err.message}`);
+    }
+  }
+
+  return { intent: "chat", confidence: 0, needsClarification: true, clarificationQuestion: null, model: null };
+}
+
+export async function askChat({
+  groqClient, history, traceId = null,
+  models = DEFAULT_MODELS,
+}) {
+  const systemPrompt = getSystemPrompt("chat");
+  if (traceId) logTrace(traceId, "ChatAgent: start");
+
+  for (const model of models) {
+    try {
+      const messages = [{ role: "system", content: systemPrompt }, ...history];
+      const response = await groqClient.chat.completions.create({ model, messages });
+      const choice = response.choices[0];
+      let reply = choice.message.content ?? "";
+      reply = await sanitizeReply({ groqClient, model, systemPrompt, history, reply });
+      history.push({ role: "assistant", content: reply });
+      console.log(`Respondido (chat) com: ${model}`);
+      if (traceId) logTrace(traceId, "ChatAgent: replied");
+      return reply;
+    } catch (err) {
+      console.warn(`Falha no chat com ${model}: ${err.message}`);
+    }
+  }
+  return "Não consegui processar sua mensagem no momento. Tente novamente.";
+}
+
+export async function askScraper({
+  groqClient, history, traceId = null,
+  models = DEFAULT_MODELS,
+}) {
+  const systemPrompt = getSystemPrompt("scraper");
+  if (traceId) logTrace(traceId, "ScraperAgent: start");
+
+  for (const model of models) {
+    try {
+      const messages = [{ role: "system", content: systemPrompt }, ...history];
+      const response = await groqClient.chat.completions.create({ model, messages });
+      const choice = response.choices[0];
+      let reply = choice.message.content ?? "";
+      reply = await sanitizeReply({ groqClient, model, systemPrompt, history, reply });
+      history.push({ role: "assistant", content: reply });
+      console.log(`Respondido (scraper) com: ${model}`);
+      if (traceId) logTrace(traceId, "ScraperAgent: replied");
+      return reply;
+    } catch (err) {
+      console.warn(`Falha no scraper com ${model}: ${err.message}`);
+    }
+  }
+  return "Não consegui processar sua mensagem no momento. Tente novamente.";
+}
+
+export async function askSchedule({
+  groqClient, history, username, userMessage, traceId = null,
   models = DEFAULT_MODELS, maxHistory = MAX_HISTORY,
   onScheduleDetected, onDeleteDetected, onListDetected,
+  toolChoice = "auto",
 }) {
-  const systemPrompt = getSystemPrompt();
-  history.push({ role: "user", content: `${username}: ${userMessage}` });
-  if (history.length > maxHistory) history.splice(0, history.length - maxHistory);
+  const systemPrompt = getSystemPrompt("schedule");
+  if (traceId) logTrace(traceId, "ScheduleAgent: start");
 
   for (const model of models) {
     try {
@@ -193,8 +299,8 @@ export async function askGroq({
       const response = await groqClient.chat.completions.create({
         model,
         messages,
-        tools: TOOLS,
-        tool_choice: "auto",
+        tools: SCHEDULE_TOOLS,
+        tool_choice: toolChoice,
       });
       const choice = response.choices[0];
 
@@ -203,11 +309,13 @@ export async function askGroq({
           const args = JSON.parse(toolCall.function.arguments);
 
           if (toolCall.function.name === "list_schedules" && onListDetected) {
+            if (traceId) logTrace(traceId, "ScheduleAgent: tool=list_schedules");
             await onListDetected();
             return null;
           }
 
           if (toolCall.function.name === "create_schedule" && onScheduleDetected) {
+            if (traceId) logTrace(traceId, "ScheduleAgent: tool=create_schedule");
             const valid = (args.schedules ?? [])
               .filter((s) => typeof s.cron === "string" && typeof s.message === "string" && typeof s.label === "string" && s.cron.trim() !== "" && s.message.trim() !== "")
               .map((s) => {
@@ -219,6 +327,7 @@ export async function askGroq({
           }
 
           if (toolCall.function.name === "delete_schedule" && onDeleteDetected) {
+            if (traceId) logTrace(traceId, "ScheduleAgent: tool=delete_schedule");
             await onDeleteDetected(args.ids ?? []);
             return null;
           }
@@ -228,13 +337,59 @@ export async function askGroq({
       let reply = choice.message.content ?? "";
       reply = await sanitizeReply({ groqClient, model, systemPrompt, history, reply });
       history.push({ role: "assistant", content: reply });
-      console.log(`Respondido com: ${model}`);
+      console.log(`Respondido (schedule) com: ${model}`);
+      if (traceId) logTrace(traceId, "ScheduleAgent: replied (no tool)");
       return reply;
     } catch (err) {
-      console.warn(`Falha com ${model}: ${err.message}`);
+      console.warn(`Falha no schedule com ${model}: ${err.message}`);
     }
   }
   return "Não consegui processar sua mensagem no momento. Tente novamente.";
+}
+
+export async function ask({
+  groqClient, history, username, userMessage, traceId = null,
+  models = DEFAULT_MODELS, maxHistory = MAX_HISTORY,
+  onScheduleDetected, onDeleteDetected, onListDetected,
+}) {
+  history.push({ role: "user", content: `${username}: ${userMessage}` });
+  if (history.length > maxHistory) history.splice(0, history.length - maxHistory);
+
+  const route = await routeIntent({ groqClient, history, models, traceId });
+  if (route.needsClarification || (route.intent !== "chat" && route.confidence < 0.55)) {
+    if (traceId) logTrace(traceId, "Router: needs clarification -> chat reply");
+    return route.clarificationQuestion
+      ?? "Você quer conversar normalmente ou lidar com lembretes? Se for lembretes, diga se quer criar, listar ou remover.";
+  }
+
+  if (route.intent === "schedule") {
+    let scheduleToolChoice = "auto";
+    if (route.action === "create") scheduleToolChoice = { type: "function", function: { name: "create_schedule" } };
+    if (route.action === "list") scheduleToolChoice = { type: "function", function: { name: "list_schedules" } };
+    if (route.action === "delete") scheduleToolChoice = { type: "function", function: { name: "delete_schedule" } };
+    if (traceId) logTrace(traceId, "Router: route to ScheduleAgent");
+    return askSchedule({
+      groqClient,
+      history,
+      username,
+      userMessage,
+      models,
+      maxHistory,
+      onScheduleDetected,
+      onDeleteDetected,
+      onListDetected,
+      toolChoice: scheduleToolChoice,
+      traceId,
+    });
+  }
+
+  if (route.intent === "scraper") {
+    if (traceId) logTrace(traceId, "Router: route to ScraperAgent");
+    return askScraper({ groqClient, history, models, traceId });
+  }
+
+  if (traceId) logTrace(traceId, "Router: route to ChatAgent");
+  return askChat({ groqClient, history, models, traceId });
 }
 
 export async function handleMessage({ message, channelId, history, groqClient, ask }) {
@@ -243,6 +398,8 @@ export async function handleMessage({ message, channelId, history, groqClient, a
 
   const content = message.content.trim();
   const channel = message.channel;
+  const traceId = `${Date.now().toString(36)}-${++TRACE_SEQ}`;
+  logTrace(traceId, `Message: ${message.author.username} -> "${content}"`);
 
   if (content === CLEAR_COMMAND) {
     history.splice(0, history.length);
@@ -266,7 +423,12 @@ export async function handleMessage({ message, channelId, history, groqClient, a
 
   try {
     const context = await resolveContext(message);
-    const reply = await ask(message.author.username, context, {
+    logTrace(traceId, "Context resolved, invoking router");
+    const reply = await ask({
+      groqClient,
+      history,
+      username: message.author.username,
+      userMessage: context,
       onListDetected: async () => {
         const schedules = Schedules.findByUser(message.author.id);
         if (schedules.length === 0) {
@@ -300,8 +462,10 @@ export async function handleMessage({ message, channelId, history, groqClient, a
           await sendDeleteUI(channel, schedules);
         }
       },
+      traceId,
     });
     if (reply) await channel.send(reply);
+    logTrace(traceId, "Message handling complete");
   } catch (err) {
     console.error(`Erro ao enviar mensagem: ${err.message}`);
     try { await channel.send("Ocorreu um erro ao processar sua mensagem."); } catch { }
@@ -320,7 +484,7 @@ export async function handleInteraction({ interaction, channel }) {
 
   if (customId === "schedule_confirm") {
     const pending = pendingSchedules.get(userId);
-    if (!pending) { await interaction.reply({ content: "Nenhum agendamento pendente.", ephemeral: true }); return; }
+    if (!pending) { await interaction.reply({ content: "Nenhum agendamento pendente.", flags: MessageFlags.Ephemeral }); return; }
     pendingSchedules.delete(userId);
     for (const s of pending) {
       const result = Schedules.insert(userId, username, s.cron, s.message, s.repeat);
@@ -381,8 +545,7 @@ export async function run() {
   client.on("messageCreate", async (message) => {
     await handleMessage({
       message, channelId, history, groqClient: groq,
-      ask: (username, content, { onScheduleDetected, onDeleteDetected, onListDetected } = {}) =>
-        askGroq({ groqClient: groq, history, username, userMessage: content, onScheduleDetected, onDeleteDetected, onListDetected }),
+      ask,
     });
   });
 

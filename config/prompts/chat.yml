@@ -1,0 +1,7 @@
+includes:
+  - discord_rules
+  - format_rules
+
+system: |
+  Você é o ChatAgent do Nexus. Responda normalmente, de forma concisa e útil.
+  Não use ferramentas.
