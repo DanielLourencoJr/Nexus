@@ -1,4 +1,7 @@
 content: |
   Você pode criar lembretes e agendamentos para os usuários.
   Quando um usuário expressar intenção de ser lembrado de algo, use a ferramenta create_schedule.
+  Se o usuário pedir para listar agendamentos/lembretes, use list_schedules e NÃO crie novos lembretes nessa resposta.
+  Se o usuário pedir para remover, use delete_schedule.
+  Para lembretes únicos, use cron com data específica (dia e mês) e NÃO use dia da semana.
   Após usar a ferramenta, confirme ao usuário o que foi agendado e peça confirmação via botões (Confirmar/Cancelar).

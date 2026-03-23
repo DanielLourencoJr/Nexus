@@ -30,6 +30,36 @@ const MODELS = [
 
 const TOOLS = buildTools(["list_schedules", "create_schedule", "delete_schedule"]);
 
+function getDatePartsInTimeZone(timeZone = "America/Fortaleza") {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const lookup = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return {
+    year: Number(lookup.year),
+    month: Number(lookup.month),
+    day: Number(lookup.day),
+  };
+}
+
+function normalizeOneTimeCron(cronExpr) {
+  const fields = cronExpr.trim().split(/\s+/);
+  if (fields.length === 6) fields.shift(); // drop seconds
+  if (fields.length !== 5) return cronExpr;
+
+  let [min, hour, dom, mon, dow] = fields;
+  if (dom === "*" && mon === "*") {
+    const { day, month } = getDatePartsInTimeZone();
+    dom = String(day);
+    mon = String(month);
+  }
+  if (dow !== "*") dow = "*";
+  return [min, hour, dom, mon, dow].join(" ");
+}
+
 function getSystemPrompt() {
   const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Fortaleza" });
   return buildPrompt("nexus", { now });
@@ -180,7 +210,11 @@ export async function askGroq({
           if (toolCall.function.name === "create_schedule" && onScheduleDetected) {
             const valid = (args.schedules ?? [])
               .filter((s) => typeof s.cron === "string" && typeof s.message === "string" && typeof s.label === "string" && s.cron.trim() !== "" && s.message.trim() !== "")
-              .map((s) => ({ ...s, repeat: s.repeat !== false }));
+              .map((s) => {
+                const repeat = s.repeat !== false;
+                const cron = repeat ? s.cron : normalizeOneTimeCron(s.cron);
+                return { ...s, repeat, cron };
+              });
             if (valid.length > 0) { await onScheduleDetected(valid); return null; }
           }
 
