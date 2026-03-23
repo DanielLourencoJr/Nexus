@@ -51,9 +51,15 @@ function inferToolChoice(userMessage) {
     /(todo|toda|todos|todas)\s+(dia|dias|semana|semanas)/.test(text) ||
     /(segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo)/.test(text);
 
-  if (wantsDelete) return { type: "function", function: { name: "delete_schedule" } };
-  if (wantsList) return { type: "function", function: { name: "list_schedules" } };
-  if (wantsCreate) return { type: "function", function: { name: "create_schedule" } };
+  if (wantsDelete && !wantsCreate && !wantsList) {
+    return { type: "function", function: { name: "delete_schedule" } };
+  }
+  if (wantsCreate && !wantsDelete && !wantsList) {
+    return { type: "function", function: { name: "create_schedule" } };
+  }
+  if (wantsList && !wantsCreate && !wantsDelete) {
+    return { type: "function", function: { name: "list_schedules" } };
+  }
   return null;
 }
 
@@ -188,12 +194,25 @@ export async function askGroq({
     try {
       const messages = [{ role: "system", content: systemPrompt }, ...history];
       const toolChoice = inferToolChoice(userMessage);
-      const response = await groqClient.chat.completions.create({
-        model,
-        messages,
-        tools: TOOLS,
-        tool_choice: toolChoice ?? "auto",
-      });
+      let response;
+      try {
+        response = await groqClient.chat.completions.create({
+          model,
+          messages,
+          tools: TOOLS,
+          tool_choice: toolChoice ?? "auto",
+        });
+      } catch (err) {
+        const msg = String(err?.message ?? "");
+        const shouldRetry = toolChoice && (msg.includes("tool_choice") || msg.includes("Tool call validation failed"));
+        if (!shouldRetry) throw err;
+        response = await groqClient.chat.completions.create({
+          model,
+          messages,
+          tools: TOOLS,
+          tool_choice: "auto",
+        });
+      }
       const choice = response.choices[0];
 
       if (choice.finish_reason === "tool_calls") {
