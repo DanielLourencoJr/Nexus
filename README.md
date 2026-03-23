@@ -54,11 +54,14 @@ nexus/
 │   └── prompts/
 │       ├── _base.yml              # contexto base (identidade, data atual)
 │       ├── nexus.yml              # prompt principal (lista includes)
-│       ├── schedule_extractor.yml # prompt para extração de agendamentos (não usado)
-│       └── snippets/
-│           ├── discord_rules.yml      # formato, limite de caracteres
-│           ├── format_rules.yml       # nunca inventar, admitir incerteza
-│           └── schedule_awareness.yml # instruções sobre agendamentos
+│       ├── snippets/
+│       │   ├── discord_rules.yml      # formato, limite de caracteres
+│       │   ├── format_rules.yml       # nunca inventar, admitir incerteza
+│       │   └── schedule_awareness.yml # instruções sobre agendamentos
+│       └── tools/
+│           ├── create_schedule.yml # schema de criação
+│           ├── delete_schedule.yml # schema de remoção
+│           └── list_schedules.yml  # schema de listagem
 ├── data/
 │   └── nexus.db                   # banco SQLite (criado automaticamente)
 ├── src/
@@ -74,18 +77,16 @@ nexus/
 | Comando | Descrição |
 |---|---|
 | `!clear` | Limpa o histórico de contexto em memória |
-| `!confirmar` | Confirma um agendamento pendente |
-| `!cancelar` | Descarta um agendamento pendente |
 | `!agendamentos` | Lista seus agendamentos ativos |
 | `!deletar <id>` | Remove o agendamento com o ID informado |
 
 ## Agendamentos
 
-O bot detecta automaticamente intenções de agendamento na conversa usando tool calling. Quando identificar uma intenção, exibe um resumo e aguarda confirmação manual antes de salvar.
+O bot detecta automaticamente intenções de agendamento na conversa usando tool calling. Quando identificar uma intenção, exibe um resumo e aguarda confirmação manual via botões antes de salvar. Para reduzir respostas erradas, a intenção de criar/listar/remover é inferida antes do tool calling.
 
 Exemplo:
 > "Me lembra de tomar água todo dia às 8h"
-> → Bot exibe o agendamento detectado e aguarda `!confirmar`
+> → Bot exibe o agendamento detectado e aguarda confirmação via botões
 
 Agendamentos são salvos em `data/nexus.db` e reativados automaticamente ao reiniciar o bot. Os lembretes são enviados com menção ao usuário no canal configurado.
 
@@ -106,6 +107,10 @@ Os prompts vivem em `config/prompts/`. Cada arquivo YAML pode ter:
 - `includes` — lista de snippets reutilizáveis de `config/prompts/snippets/`
 
 O `_base.yml` é incluído automaticamente em todos os prompts e suporta interpolação de variáveis com `{{nome}}`.
+
+## Ferramentas (tools)
+
+Os schemas das tools ficam em `config/prompts/tools/` e são carregados em `index.js`.
 
 ## Limitações
 
