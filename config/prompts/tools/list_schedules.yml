@@ -1,0 +1,9 @@
+name: list_schedules
+description: >
+  Lista os agendamentos ativos do usuário.
+  Use APENAS quando o usuário pedir explicitamente para ver, listar ou consultar lembretes existentes.
+  NÃO use quando o usuário quiser criar um novo lembrete — mesmo que mencione lembretes existentes como contexto.
+parameters:
+  type: object
+  properties: {}
+  required: []

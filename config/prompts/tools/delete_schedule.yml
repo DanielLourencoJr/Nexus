@@ -1,0 +1,15 @@
+name: delete_schedule
+description: >
+  Remove um ou mais agendamentos existentes do usuário.
+  Use quando o usuário pedir para apagar, cancelar, remover ou desativar lembretes.
+  Se o usuário não especificar quais IDs remover, passe ids vazio [] para mostrar a lista de seleção.
+  NÃO use para criar ou listar agendamentos.
+parameters:
+  type: object
+  properties:
+    ids:
+      type: array
+      items:
+        type: number
+      description: "IDs dos agendamentos a remover. Passe [] se o usuário não especificou quais."
+  required: [ids]

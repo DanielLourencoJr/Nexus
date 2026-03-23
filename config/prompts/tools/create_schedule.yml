@@ -1,0 +1,30 @@
+name: create_schedule
+description: >
+  Cria um ou mais lembretes agendados para o usuário.
+  Use quando o usuário expressar intenção de criar, adicionar ou configurar um novo lembrete,
+  independente de mencionar lembretes existentes como contexto.
+  NÃO use para listar agendamentos existentes.
+parameters:
+  type: object
+  properties:
+    schedules:
+      type: array
+      items:
+        type: object
+        properties:
+          cron:
+            type: string
+            description: >
+              Expressão cron no fuso America/Fortaleza.
+              Dias: 0=dom, 1=seg, 2=ter, 3=qua, 4=qui, 5=sex, 6=sab.
+          message:
+            type: string
+            description: Texto do lembrete que será enviado ao usuário.
+          label:
+            type: string
+            description: "Descrição legível do agendamento, ex: 'Todo dia às 9h'."
+          repeat:
+            type: boolean
+            description: "true para agendamento recorrente, false para disparo único."
+        required: [cron, message, label, repeat]
+  required: [schedules]

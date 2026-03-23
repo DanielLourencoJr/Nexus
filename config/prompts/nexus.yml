@@ -1,0 +1,7 @@
+includes:
+  - discord_rules
+  - format_rules
+  - schedule_awareness
+
+system: |
+  Você é o assistente principal do servidor.
