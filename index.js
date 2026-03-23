@@ -30,39 +30,6 @@ const MODELS = [
 
 const TOOLS = buildTools(["list_schedules", "create_schedule", "delete_schedule"]);
 
-function inferToolChoice(userMessage) {
-  const cleaned = userMessage.startsWith("[em resposta a ") && userMessage.includes("\n")
-    ? userMessage.split("\n").slice(1).join("\n")
-    : userMessage;
-  const text = cleaned.toLowerCase();
-
-  const wantsList =
-    /meus?\s+(lembretes|agendamentos)/.test(text) ||
-    /(listar|mostra(r)?|ver|consultar)\s+(lembretes?|agendamentos?)/.test(text) ||
-    /quais\s+s[aã]o\s+meus?\s+(lembretes?|agendamentos?)/.test(text);
-
-  const wantsDelete =
-    /(deletar|apagar|excluir|remover)\s+(lembretes?|agendamentos?)/.test(text) ||
-    /(cancelar|parar)\s+(lembrete|agendamento)/.test(text);
-
-  const wantsCreate =
-    /(me\s+lembre|me\s+lembra|me\s+avise|me\s+avisa|me\s+notifique)/.test(text) ||
-    /(crie|criar|agende|agendar|adiciona(r)?|novo)\s+(um\s+)?(lembrete|agendamento)/.test(text) ||
-    /(todo|toda|todos|todas)\s+(dia|dias|semana|semanas)/.test(text) ||
-    /(segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo)/.test(text);
-
-  if (wantsDelete && !wantsCreate && !wantsList) {
-    return { type: "function", function: { name: "delete_schedule" } };
-  }
-  if (wantsCreate && !wantsDelete && !wantsList) {
-    return { type: "function", function: { name: "create_schedule" } };
-  }
-  if (wantsList && !wantsCreate && !wantsDelete) {
-    return { type: "function", function: { name: "list_schedules" } };
-  }
-  return null;
-}
-
 function getSystemPrompt() {
   const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Fortaleza" });
   return buildPrompt("nexus", { now });
@@ -193,26 +160,12 @@ export async function askGroq({
   for (const model of models) {
     try {
       const messages = [{ role: "system", content: systemPrompt }, ...history];
-      const toolChoice = inferToolChoice(userMessage);
-      let response;
-      try {
-        response = await groqClient.chat.completions.create({
-          model,
-          messages,
-          tools: TOOLS,
-          tool_choice: toolChoice ?? "auto",
-        });
-      } catch (err) {
-        const msg = String(err?.message ?? "");
-        const shouldRetry = toolChoice && (msg.includes("tool_choice") || msg.includes("Tool call validation failed"));
-        if (!shouldRetry) throw err;
-        response = await groqClient.chat.completions.create({
-          model,
-          messages,
-          tools: TOOLS,
-          tool_choice: "auto",
-        });
-      }
+      const response = await groqClient.chat.completions.create({
+        model,
+        messages,
+        tools: TOOLS,
+        tool_choice: "auto",
+      });
       const choice = response.choices[0];
 
       if (choice.finish_reason === "tool_calls") {
